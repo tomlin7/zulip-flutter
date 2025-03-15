@@ -26,9 +26,9 @@ import 'package:zulip/widgets/message_list.dart';
 import 'package:zulip/widgets/page.dart';
 import 'package:zulip/widgets/theme.dart';
 
+import '../example_data.dart' as eg;
 import '../fake_async.dart';
 import '../model/binding.dart';
-import '../example_data.dart' as eg;
 import '../model/narrow_checks.dart';
 import '../stdlib_checks.dart';
 import '../test_images.dart';
@@ -114,7 +114,10 @@ void main() {
     return http.runWithClient(callback, httpClientFactory ?? () => fakeHttpClientGivingSuccess);
   }
 
-  Future<void> init() async {
+  Future<void> init({bool addSelfAccount = true}) async {
+    if (addSelfAccount) {
+      await testBinding.globalStore.add(eg.selfAccount, eg.initialSnapshot());
+    }
     addTearDown(testBinding.reset);
     testBinding.firebaseMessagingInitialToken = '012abc';
     addTearDown(NotificationService.debugReset);
@@ -481,7 +484,8 @@ void main() {
       await init();
       final stream = eg.stream();
       final message = eg.streamMessage(stream: stream);
-      await checkNotifications(async, messageFcmMessage(message, streamName: stream.name),
+      await checkNotifications(async,
+        messageFcmMessage(message, streamName: stream.name),
         expectedIsGroupConversation: true,
         expectedTitle: '#${stream.name} > ${message.topic}',
         expectedTagComponent: 'stream:${message.streamId}:${message.topic}');
@@ -613,7 +617,8 @@ void main() {
       await init();
       final stream = eg.stream();
       final message = eg.streamMessage(stream: stream);
-      await checkNotifications(async, messageFcmMessage(message, streamName: null),
+      await checkNotifications(async,
+        messageFcmMessage(message, streamName: null),
         expectedIsGroupConversation: true,
         expectedTitle: '#(unknown channel) > ${message.topic}',
         expectedTagComponent: 'stream:${message.streamId}:${message.topic}');
@@ -730,6 +735,7 @@ void main() {
         await init();
         final message = eg.dmMessage(from: eg.otherUser, to: [eg.selfUser]);
         final data = messageFcmMessage(message);
+
         receiveFcmMessage(async, data);
         checkNotification(data,
           messageStyleMessages: [data],
@@ -746,6 +752,7 @@ void main() {
         await init();
         final message = eg.dmMessage(from: eg.otherUser, to: [eg.selfUser]);
         final data = messageFcmMessage(message);
+
         receiveFcmMessage(async, data);
         checkNotification(data,
           messageStyleMessages: [data],
@@ -872,7 +879,8 @@ void main() {
     })));
 
     test('remove: different realm URLs but same user-ids and same message-ids', () => runWithHttpClient(() => awaitFakeAsync((async) async {
-      await init();
+      await init(addSelfAccount: false);
+
       final stream = eg.stream();
       const topic = 'Some Topic';
       final conversationKey = 'stream:${stream.streamId}:some topic';
@@ -881,6 +889,7 @@ void main() {
         realmUrl: Uri.parse('https://1.chat.example'),
         id: 1001,
         user: eg.user(userId: 1001));
+      await testBinding.globalStore.add(account1, eg.initialSnapshot());
       final message1 = eg.streamMessage(id: 1000, stream: stream, topic: topic);
       final data1 =
         messageFcmMessage(message1, account: account1, streamName: stream.name);
@@ -890,6 +899,7 @@ void main() {
         realmUrl: Uri.parse('https://2.chat.example'),
         id: 1002,
         user: eg.user(userId: 1001));
+      await testBinding.globalStore.add(account2, eg.initialSnapshot());
       final message2 = eg.streamMessage(id: 1000, stream: stream, topic: topic);
       final data2 =
         messageFcmMessage(message2, account: account2, streamName: stream.name);
@@ -917,19 +927,21 @@ void main() {
     })));
 
     test('remove: different user-ids but same realm URL and same message-ids', () => runWithHttpClient(() => awaitFakeAsync((async) async {
-      await init();
+      await init(addSelfAccount: false);
       final realmUrl = eg.realmUrl;
       final stream = eg.stream();
       const topic = 'Some Topic';
       final conversationKey = 'stream:${stream.streamId}:some topic';
 
       final account1 = eg.account(id: 1001, user: eg.user(userId: 1001), realmUrl: realmUrl);
+      await testBinding.globalStore.add(account1, eg.initialSnapshot());
       final message1 = eg.streamMessage(id: 1000, stream: stream, topic: topic);
       final data1 =
         messageFcmMessage(message1, account: account1, streamName: stream.name);
       final groupKey1 = '${account1.realmUrl}|${account1.userId}';
 
       final account2 = eg.account(id: 1002, user: eg.user(userId: 1002), realmUrl: realmUrl);
+      await testBinding.globalStore.add(account2, eg.initialSnapshot());
       final message2 = eg.streamMessage(id: 1000, stream: stream, topic: topic);
       final data2 =
         messageFcmMessage(message2, account: account2, streamName: stream.name);
@@ -953,6 +965,21 @@ void main() {
       ]);
 
       receiveFcmMessage(async, removeFcmMessage([message2], account: account2));
+      check(testBinding.androidNotificationHost.activeNotifications).isEmpty();
+    })));
+
+    test('removeNotificationsForAccount removes notifications', () => runWithHttpClient(() => awaitFakeAsync((async) async {
+      await init();
+      final message = eg.dmMessage(from: eg.otherUser, to: [eg.selfUser]);
+
+      await checkNotifications(async, messageFcmMessage(message),
+        expectedIsGroupConversation: false,
+        expectedTitle: eg.otherUser.fullName,
+        expectedTagComponent: 'dm:${message.allRecipientIds.join(",")}');
+
+      check(testBinding.androidNotificationHost.activeNotifications).isNotEmpty();
+      await NotificationDisplayManager.removeNotificationsForAccount(
+        eg.selfAccount.realmUrl, eg.selfAccount.userId);
       check(testBinding.androidNotificationHost.activeNotifications).isEmpty();
     })));
   });

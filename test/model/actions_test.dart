@@ -1,4 +1,5 @@
 import 'package:checks/checks.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -12,6 +13,7 @@ import '../fake_async.dart';
 import '../model/binding.dart';
 import '../model/store_checks.dart';
 import '../model/test_store.dart';
+import '../notifications/display_test.dart';
 import '../stdlib_checks.dart';
 import 'store_test.dart';
 
@@ -27,6 +29,11 @@ void main() {
     await testBinding.globalStore.add(selfAccount, eg.initialSnapshot());
     store = await testBinding.globalStore.perAccount(selfAccount.id);
     connection = store.connection as FakeApiConnection;
+
+    testBinding.firebaseMessagingInitialToken = '012abc';
+    addTearDown(NotificationService.debugReset);
+    NotificationService.debugBackgroundIsolateIsLive = false;
+    await NotificationService.instance.start();
   }
 
   /// Creates and caches a new [FakeApiConnection] in [TestGlobalStore].
@@ -79,6 +86,23 @@ void main() {
       final newConnection = separateConnection()
         ..prepare(delay: unregisterDelay, json: {'msg': '', 'result': 'success'});
 
+      // Create a notification to check that it's removed after logout
+      final message = eg.dmMessage(from: eg.otherUser, to: [eg.selfUser]);
+      final data = messageFcmMessage(message);
+
+      testBinding.firebaseMessaging.onMessage.add(
+        RemoteMessage(data: data.toJson()));
+      async.flushMicrotasks();
+
+      testBinding.firebaseMessaging.onBackgroundMessage.add(
+        RemoteMessage(data: data.toJson()));
+      async.flushMicrotasks();
+
+      // NotificationDisplayManager.onFcmMessage(data, RemoteMessage(data: data.toJson()).data);
+
+      // Check that notifications were created
+      check(testBinding.androidNotificationHost.activeNotifications).isNotEmpty();
+
       final future = logOutAccount(testBinding.globalStore, eg.selfAccount.id);
       // Unregister-token request and account removal dispatched together
       checkSingleUnregisterRequest(newConnection);
@@ -94,6 +118,9 @@ void main() {
 
       async.elapse(unregisterDelay - TestGlobalStore.removeAccountDuration);
       check(newConnection.isOpen).isFalse();
+
+      // Check that notifications were removed
+      check(testBinding.androidNotificationHost.activeNotifications).isEmpty();
     }));
 
     test('unregister request has an error', () => awaitFakeAsync((async) async {
@@ -120,6 +147,10 @@ void main() {
 
       async.elapse(unregisterDelay - TestGlobalStore.removeAccountDuration);
       check(newConnection.isOpen).isFalse();
+
+      // Check that notifications were removed
+      final activeNotifications = await testBinding.androidNotificationHost.getActiveNotifications(desiredExtras: []);
+      check(activeNotifications).isEmpty();
     }));
   });
 
